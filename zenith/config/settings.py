@@ -20,7 +20,8 @@ class Settings(BaseModel):
     # LLM & Agent Config (OpenRouter)
     OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
     OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4")
+    # LLM_MODEL: str = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "stealth/space-bunny-alpha")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
