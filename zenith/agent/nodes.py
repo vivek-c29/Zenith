@@ -109,6 +109,76 @@ def _call_llm_json(
     )
     return {}
 
+def _apply_patch(
+    repo_path: str,
+    file_path: str,
+    search_text: str,
+    replace_text: str,
+) -> bool:
+    """
+    Safely apply a text replacement patch to a repository file.
+
+    Returns True only when exactly one occurrence of search_text
+    is found and replaced successfully.
+    """
+    if not file_path or not search_text:
+        logger.error("Patch rejected: file_path or search_text is empty.")
+        return False
+
+    full_path = os.path.abspath(os.path.join(repo_path, file_path))
+    repo_root = os.path.abspath(repo_path)
+
+    # Prevent patches from escaping the repository.
+    if not (
+        full_path == repo_root
+        or full_path.startswith(repo_root + os.sep)
+    ):
+        logger.error(f"Patch rejected: path escapes repository: {file_path}")
+        return False
+
+    if not os.path.isfile(full_path):
+        logger.error(f"Patch rejected: file not found: {file_path}")
+        return False
+
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError as e:
+        logger.error(f"Patch rejected: unable to read {file_path}: {e}")
+        return False
+
+    match_count = content.count(search_text)
+
+    if match_count == 0:
+        logger.error(
+            f"Patch rejected: search text not found in {file_path}."
+        )
+        return False
+
+    if match_count > 1:
+        logger.error(
+            f"Patch rejected: search text matched {match_count} times "
+            f"in {file_path}; expected exactly one match."
+        )
+        return False
+
+    updated_content = content.replace(search_text, replace_text, 1)
+
+    if updated_content == content:
+        logger.error(
+            f"Patch rejected: replacement produced no change in {file_path}."
+        )
+        return False
+
+    try:
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(updated_content)
+    except OSError as e:
+        logger.error(f"Patch failed: unable to write {file_path}: {e}")
+        return False
+
+    logger.info(f"Patch applied successfully: {file_path}")
+    return True
 
 # ============================================================
 # Agent Nodes
@@ -226,12 +296,176 @@ def researcher_agent(state: AgentState) -> Dict[str, Any]:
         "_indexer": indexer,
     }
 
+def _get_current_file_context(
+    repo_path: str,
+    state: AgentState,
+    max_file_chars: int = 30000,
+) -> str:
+    """
+    Read authoritative source code directly from the live repository.
+
+    Candidate files come from:
+    1. Manager's suspected_files, when they are valid repository paths.
+    2. RAG results, when they contain valid repository paths.
+    3. Manager's suspected_functions, by locating their definitions
+       in the current repository.
+    """
+    repo_root = os.path.abspath(repo_path)
+    file_paths = set()
+
+    analysis = state.get("analysis", {})
+
+    # 1. Accept suspected_files only when they are real repository files.
+    for file_path in analysis.get("suspected_files", []):
+        if not isinstance(file_path, str):
+            continue
+
+        file_path = file_path.strip()
+        if not file_path:
+            continue
+
+        full_path = os.path.abspath(os.path.join(repo_root, file_path))
+
+        if (
+            full_path.startswith(repo_root + os.sep)
+            and os.path.isfile(full_path)
+        ):
+            file_paths.add(os.path.relpath(full_path, repo_root))
+        else:
+            logger.debug(
+                f"Ignoring non-file suspected path: {file_path}"
+            )
+
+    # 2. Add valid files from RAG metadata.
+    for item in state.get("relevant_code", []):
+        metadata = item.get("metadata", {})
+        file_path = metadata.get("file_path")
+
+        if not isinstance(file_path, str):
+            continue
+
+        file_path = file_path.strip()
+        if not file_path:
+            continue
+
+        full_path = os.path.abspath(os.path.join(repo_root, file_path))
+
+        if (
+            full_path.startswith(repo_root + os.sep)
+            and os.path.isfile(full_path)
+        ):
+            file_paths.add(os.path.relpath(full_path, repo_root))
+
+    # 3. If paths are missing/invalid, locate suspected functions
+    #    directly in the live repository.
+    suspected_functions = analysis.get("suspected_functions", [])
+
+    if suspected_functions:
+        for root, dirs, files in os.walk(repo_root):
+            dirs[:] = [
+                d for d in dirs
+                if d not in {
+                    ".git",
+                    ".venv",
+                    "venv",
+                    "__pycache__",
+                    ".pytest_cache",
+                }
+            ]
+
+            for filename in files:
+                if not filename.endswith(".py"):
+                    continue
+
+                candidate_path = os.path.join(root, filename)
+
+                try:
+                    with open(
+                        candidate_path,
+                        "r",
+                        encoding="utf-8",
+                    ) as f:
+                        content = f.read()
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+                for function_name in suspected_functions:
+                    if not isinstance(function_name, str):
+                        continue
+
+                    function_name = function_name.strip()
+                    if not function_name:
+                        continue
+
+                    if (
+                        f"def {function_name}(" in content
+                        or f"async def {function_name}(" in content
+                    ):
+                        relative_path = os.path.relpath(
+                            candidate_path,
+                            repo_root,
+                        )
+                        file_paths.add(relative_path)
+
+                        logger.info(
+                            f"Resolved function '{function_name}' "
+                            f"to current file: {relative_path}"
+                        )
+
+    if not file_paths:
+        logger.warning(
+            "No authoritative current source files could be resolved."
+        )
+        return "No readable current source files found."
+
+    context_parts = []
+
+    for file_path in sorted(file_paths):
+        full_path = os.path.abspath(os.path.join(repo_root, file_path))
+
+        try:
+            with open(
+                full_path,
+                "r",
+                encoding="utf-8",
+            ) as f:
+                content = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning(
+                f"Could not read current file {file_path}: {e}"
+            )
+            continue
+
+        if len(content) > max_file_chars:
+            logger.warning(
+                f"Skipping oversized file context: {file_path}"
+            )
+            continue
+
+        context_parts.append(
+            f"### CURRENT FILE: {file_path}\n"
+            f"```text\n{content}\n```"
+        )
+
+    if not context_parts:
+        return "No readable current source files found."
+
+    logger.info(
+        f"Loaded {len(context_parts)} authoritative current file(s) "
+        "for Coder."
+    )
+
+    return "\n\n".join(context_parts)
 
 def coder_agent(state: AgentState) -> Dict[str, Any]:
     """Coder: Writes the code patch based on strategy & feedback."""
     logger.info(f"👨‍💻 Coder Agent (Iter {state.get('iteration', 0)}): Writing code...")
     
     code_context = ""
+    current_file_context = _get_current_file_context(
+    state["repo_path"],
+    state,
+    )
     for c in state.get("relevant_code", []):
         meta = c.get("metadata", {})
         code_context += f"### {meta.get('file_path')}\n```\n{meta.get('content')}\n```\n"
@@ -240,9 +474,10 @@ def coder_agent(state: AgentState) -> Dict[str, Any]:
         analysis=json.dumps(state.get("analysis", {})),
         strategy_document=state.get("strategy_document", ""),
         relevant_code=code_context,
+        current_file_context=current_file_context,
         reviewer_feedback=state.get("reviewer_feedback", "None"),
         error_analysis=state.get("error_analysis", "None"),
-    )
+        )
 
     fix_data = _call_llm_json(prompt, max_attempts=2)
 
@@ -311,17 +546,27 @@ def sandbox_node(state: AgentState) -> Dict[str, Any]:
         shutil.copytree(repo_path, sandbox_path, dirs_exist_ok=True)
 
     for patch in state.get("proposed_patches", []):
-        file_path = patch.get("file_path")
-        search_text = patch.get("search_text")
-        replace_text = patch.get("replace_text")
-        
-        full_path = os.path.join(sandbox_path, file_path)
-        if os.path.exists(full_path):
-            with open(full_path, "r") as f:
-                content = f.read()
-            content = content.replace(search_text, replace_text)
-            with open(full_path, "w") as f:
-                f.write(content)
+        if not _apply_patch(
+            sandbox_path,
+            patch.get("file_path", ""),
+            patch.get("search_text", ""),
+            patch.get("replace_text", ""),
+        ):
+            logger.error(
+                f"Failed to apply patch for "
+                f"{patch.get('file_path', '<unknown>')}"
+            )
+            return {
+                "test_result": {
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": (
+                        f"Failed to apply patch for "
+                        f"{patch.get('file_path', '<unknown>')}"
+                    ),
+                },
+                "_sandbox_path": sandbox_path,
+            }
 
     test_command = state.get("test_command", "python -m pytest")
     
@@ -420,18 +665,21 @@ def raise_pr_node(state: AgentState) -> Dict[str, Any]:
     # 1. Apply fix to the real repo working directory
     files_to_commit = set()
     for patch in proposed_patches:
-        file_path = patch.get("file_path")
-        search_text = patch.get("search_text")
-        replace_text = patch.get("replace_text")
-        
-        full_path = os.path.join(repo_path, file_path)
-        if os.path.exists(full_path):
-            with open(full_path, "r") as f:
-                content = f.read()
-            content = content.replace(search_text, replace_text)
-            with open(full_path, "w") as f:
-                f.write(content)
-            files_to_commit.add(file_path)
+        file_path = patch.get("file_path", "")
+
+        if not _apply_patch(
+            repo_path,
+            file_path,
+            patch.get("search_text", ""),
+            patch.get("replace_text", ""),
+        ):
+            logger.error(
+                f"Failed to apply patch to repository: {file_path}. "
+                "Aborting PR creation."
+            )
+            return {}
+
+        files_to_commit.add(file_path)
             
     # Generate contextual PR and Commit messages via LLM
     logger.info("  -> Generating commit and PR messages...")

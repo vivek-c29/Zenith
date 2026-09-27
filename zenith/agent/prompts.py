@@ -89,6 +89,17 @@ CODER_PROMPT = """You are an Expert Software Engineer.
 ## Relevant Code
 {relevant_code}
 
+## CURRENT FILE CONTENT FROM LIVE REPOSITORY
+{current_file_context}
+
+Rules:
+1. Provide the EXACT text to search for, preserving all whitespace, indentation, and newlines.
+2. If there is Feedback, you MUST address it. Do not repeat previous mistakes.
+3. The CURRENT FILE CONTENT FROM LIVE REPOSITORY is the authoritative source for patching.
+4. Never invent or assume code that is not present in the current file.
+5. search_text MUST be copied from the CURRENT FILE CONTENT exactly.
+6. Previous RAG context may be stale; do not use it as the source of truth for search_text.
+
 ## Feedback from Previous Iterations
 Reviewer Feedback: {reviewer_feedback}
 Test Failure Analysis: {error_analysis}
