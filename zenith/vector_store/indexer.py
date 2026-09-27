@@ -283,7 +283,7 @@ class CodeIndexer:
         )
 
         try:
-            # Get list of changed files
+            # Get files changed since the target branch.
             result = subprocess.run(
                 f"git diff --name-status {base_branch}...HEAD",
                 cwd=repo_path,
@@ -302,8 +302,48 @@ class CodeIndexer:
                     extensions=extensions,
                 )
 
-            diff_output = result.stdout.strip().split("\n")
+            diff_text = result.stdout.strip()
 
+            # CI/CD may run Zenith on the target branch itself, where
+            # base_branch == HEAD. In that case branch diff is empty even
+            # though the latest commit introduced changes.
+            if not diff_text:
+                try:
+                    base_sha = subprocess.run(
+                        ["git", "rev-parse", base_branch],
+                        cwd=repo_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout.strip()
+
+                    head_sha = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=repo_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout.strip()
+
+                    if base_sha == head_sha:
+                        fallback = subprocess.run(
+                            ["git", "diff", "--name-status", "HEAD~1"],
+                            cwd=repo_path,
+                            capture_output=True,
+                            text=True,
+                        )
+
+                        if fallback.returncode == 0:
+                            diff_text = fallback.stdout.strip()
+                            logger.info(
+                                "Base branch points to HEAD; using HEAD~1 "
+                                "to detect the latest commit changes."
+                            )
+
+                except Exception as e:
+                    logger.warning(f"Failed latest-commit diff fallback: {e}")
+
+            diff_output = diff_text.splitlines() if diff_text else []
         except Exception as e:
             logger.warning(f"Error getting git diff for sync: {e}")
 

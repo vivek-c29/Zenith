@@ -63,9 +63,51 @@ def _parse_llm_json(raw: str) -> dict:
         text = "\n".join(lines)
 
     result = safe_parse_json(text)
-    if result is None:
-        raise ValueError(f"Failed to parse LLM JSON: {text[:200]}")
+
+    if not isinstance(result, dict):
+        raise ValueError(
+            f"LLM response was not a valid JSON object: {text[:200]}"
+        )
+
     return result
+
+def _call_llm_json(
+    prompt: str,
+    max_attempts: int = 2,
+    model_override: Optional[str] = None,
+) -> dict:
+    """Call the LLM and safely recover from empty/malformed JSON responses."""
+
+    retry_prompt = prompt
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            raw_response = _call_llm(
+                retry_prompt,
+                model_override=model_override,
+            )
+            return _parse_llm_json(raw_response)
+
+        except (ValueError, TypeError, AttributeError) as e:
+            last_error = e
+            logger.warning(
+                f"LLM returned invalid JSON on attempt "
+                f"{attempt}/{max_attempts}: {e}"
+            )
+
+            if attempt < max_attempts:
+                retry_prompt = (
+                    prompt
+                    + "\n\nIMPORTANT: Your previous response was invalid or empty. "
+                    "Return ONLY one valid JSON object matching the requested schema. "
+                    "Do not include markdown, explanation outside the JSON, or code fences."
+                )
+
+    logger.error(
+        f"LLM JSON generation failed after {max_attempts} attempts: {last_error}"
+    )
+    return {}
 
 
 # ============================================================
@@ -202,8 +244,7 @@ def coder_agent(state: AgentState) -> Dict[str, Any]:
         error_analysis=state.get("error_analysis", "None"),
     )
 
-    raw_response = _call_llm(prompt)
-    fix_data = _parse_llm_json(raw_response)
+    fix_data = _call_llm_json(prompt, max_attempts=2)
 
     proposed_patches = fix_data.get("patches", [])
     explanation = fix_data.get("explanation", "")
@@ -441,17 +482,30 @@ def raise_pr_node(state: AgentState) -> Dict[str, Any]:
         logger.success(f"  -> 🎉 PR raised successfully: {pr_url}")
         
         # Risk-Based Auto-Merge
+        # Direct merge code
+        
         risk_level = state.get("risk_level", "HIGH")
-        if risk_level == "LOW" and pr_obj:
-            logger.info("  -> Risk level is LOW. Auto-merging PR...")
-            try:
-                pr_obj.merge(merge_method="squash")
-                logger.success(f"  -> 🚀 PR auto-merged successfully!")
-            except Exception as e:
-                logger.error(f"  -> Failed to auto-merge PR: {e}")
-        else:
-            logger.info(f"  -> Risk level is {risk_level}. Waiting for human review.")
+        # if risk_level == "LOW" and pr_obj:
+        #     logger.info("  -> Risk level is LOW. Auto-merging PR...")
+        #     try:
+        #         pr_obj.merge(merge_method="squash")
+        #         logger.success(f"  -> 🚀 PR auto-merged successfully!")
+        #     except Exception as e:
+        #         logger.error(f"  -> Failed to auto-merge PR: {e}")
+        # else:
+        #     logger.info(f"  -> Risk level is {risk_level}. Waiting for human review.")
             
+        # risk_level = state.get("risk_level", "HIGH")
+        # if risk_level == "LOW" and pr_obj:
+        #     logger.info("  -> Risk level is LOW. Auto-merging PR...")
+        #     try:
+        #         pr_obj.merge(merge_method="squash")
+        #         logger.success(f"  -> 🚀 PR auto-merged successfully!")
+        #     except Exception as e:
+        #         logger.error(f"  -> Failed to auto-merge PR: {e}")
+        # else:
+        logger.info(f"  -> Risk level is {risk_level}. Waiting for human review.")
+
     return {}
 
 

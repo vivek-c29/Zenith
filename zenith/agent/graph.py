@@ -23,6 +23,16 @@ from .nodes import (
     mark_failed,
 )
 
+def review_retry_node(state: AgentState) -> Dict[str, Any]:
+    """Increment iteration count after a reviewer rejection."""
+    return {"iteration": state.get("iteration", 0) + 1}
+
+
+def check_review_retry(state: AgentState) -> str:
+    """Stop reviewer retries when the iteration budget is exhausted."""
+    if state.get("iteration", 0) >= state.get("max_iterations", 3):
+        return "failed"
+    return "retry"
 
 def build_agent_graph() -> StateGraph:
     """
@@ -66,7 +76,18 @@ def build_agent_graph() -> StateGraph:
         check_review,
         {
             "approved": "sandbox_node",
-            "rejected": "coder_agent",
+            "rejected": "review_retry_node",
+        },
+    )
+
+    graph.add_node("review_retry_node", review_retry_node)
+
+    graph.add_conditional_edges(
+        "review_retry_node",
+        check_review_retry,
+        {
+            "retry": "coder_agent",
+            "failed": "mark_failed",
         },
     )
 
