@@ -9,7 +9,12 @@ The core loop is:
 By combining **LangGraph state orchestration**, **Neo4j GraphRAG**, **Tree-Sitter code parsing**, **repository-aware retrieval**, and **Docker validation**, Zenith turns code generation into a feedback-driven software engineering workflow.
 
 ---
+## 🧪 Test Repository
 
+Zenith is tested against a dedicated target repository containing controlled, reproducible regressions to validate its autonomous bug-fixing workflow.
+
+**Test Repository:** [zenith-test](https://github.com/vivek-c29/zenith-test)
+---
 ## 🔄 Engineering Loop Architecture
 
 Zenith operates as a stateful multi-agent workflow. The important part is not only generating a patch, but validating the proposed change and feeding failures back into the loop when necessary.
@@ -233,12 +238,11 @@ flowchart TD
     A --> B[Semantic Vector Retrieval]
     A --> C[Neo4j Graph Retrieval]
     A --> D[Tree-Sitter Structural Information]
-    A --> E[Historical Fix Retrieval]
+    
 
     B --> F[Relevant Context]
     C --> F
     D --> F
-    E --> F
 
     F --> G[Researcher Agent]
     G --> H[Strategy Document]
@@ -295,28 +299,21 @@ The generated `search_text` must match the current source exactly.
 
 ---
 
-# 6. 📌 Live Source Grounding
+# 6.  📌 Live Source Grounding
 
-Zenith separates **retrieved context** from the **authoritative source used for modification**.
-
-RAG helps identify relevant code and relationships, while the current repository filesystem is treated as authoritative for generating the exact patch.
+RAG helps Zenith identify relevant files and code relationships, but the **current repository source is authoritative for modification**.
 
 ```text
-RAG / Research Context
-        +
-Strategy Document
-        +
-Previous Feedback
-        +
+RAG / Research
+      +
+Strategy + Feedback
+      +
 Current Repository Source
-        ↓
-      Coder
-        ↓
- Structured Patch
+      ↓
+    Coder
+      ↓
+Structured Patch
 ```
-
-This helps prevent stale retrieved context from being used as the direct source for an exact code replacement.
-
 ---
 
 # 7. 🛡️ Patch Validation
@@ -842,34 +839,20 @@ PR          Error Analysis
 Human Review
 ```
 
----
-
-# ⚠️ Current Limitations
-
-Zenith does not guarantee that every LLM-generated fix is correct.
-
-Current limitations include:
-
-- LLM-generated patches can still be incorrect.
-- Reviewer approval does not guarantee runtime correctness.
-- Repository-specific dependencies may require additional sandbox configuration.
-- Retrieval quality depends on indexed repository information.
-- The agent operates within a bounded retry limit.
-- Pull Requests still require human review and merge approval.
 
 ---
 
-# 🔮 Future Improvements
+# 🔮 Future: Productionizing Zenith
 
-Potential future improvements include:
+The current core agent can be turned into a reusable developer platform with a thin integration layer:
 
-- Expanded Auditor workflow for additional post-test code verification
-- More extensive reliability and fault-injection testing
-- Improved patch minimization
-- More advanced repository synchronization
-- Broader language support
-- Improved dependency and environment detection
-- Additional code verification strategies
+- **Hosted Zenith Service** — Run the agent, LLM integration, and GraphRAG infrastructure as a managed backend instead of requiring local setup.
+- **GitHub App Integration** — Connect repositories through a GitHub App to automatically receive CI failures and Issues, investigate them, and create Pull Requests.
+- **Repository Configuration** — Support a lightweight `zenith.yml` for settings such as test command, base branch, and validation options.
+- **Managed Secrets & Permissions** — Keep LLM/GraphRAG credentials and repository access centrally managed with scoped permissions.
+- **Scalable Workers** — Run Docker validation and agent tasks as isolated background jobs for multiple repositories.
+
+This would preserve the existing agent core while making Zenith usable as a developer-facing service.
 
 ---
 
