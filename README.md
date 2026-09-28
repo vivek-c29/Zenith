@@ -82,19 +82,41 @@ flowchart LR
     H --> I[Human Review / Merge]
 ```
 
+A failed reviewer decision or failed runtime validation does not immediately terminate the task. The system can return to the Coder with additional feedback, subject to a bounded iteration limit.
+
 ---
 
-## 🧭 How Zenith Works
+## 🚀 Why Loop Engineering?
 
-The engineering lifecycle can be understood as:
+Most AI coding workflows are closer to:
 
-```text
-Diagnose → Research → Plan → Code → Review → Validate
-                                      ↑           |
-                                      └─ Recover ─┘
-```
+`Prompt → Generate → Submit`
 
-A failed reviewer decision or failed runtime validation does not immediately terminate the task. The system can return to the Coder with additional feedback, subject to a bounded iteration limit.
+Zenith introduces an engineering loop in which repository context, generated changes, independent review, runtime validation, and failure feedback are connected into one workflow.
+
+### i. Repository-Aware Research
+
+Zenith combines **Tree-Sitter structure**, **semantic retrieval**, **Neo4j GraphRAG**, and **historical fix information** to give the Researcher broader repository context.
+
+This helps the agent reason about relationships between code elements instead of relying only on isolated text matches.
+
+### ii. Grounded Patch Generation
+
+Instead of regenerating entire files, the Coder produces focused:
+
+`search_text → replace_text`
+
+patches.
+
+The current repository source is treated as authoritative when generating the exact change, while patch validation checks that the requested replacement is valid before modification.
+
+### iii. Validate, Recover, Then Deliver
+
+Generated changes are independently reviewed and executed inside a Docker sandbox using the configured test command.
+
+If validation fails, the Error Analyzer feeds the failure back to the Coder for another bounded iteration.
+
+Only after successful validation does Zenith proceed to Pull Request creation, with the final merge decision remaining with a human reviewer.
 
 ---
 
