@@ -200,15 +200,10 @@ File → CONTAINS → CodeChunk → CALLS → CodeChunk
 ```
 
 ```mermaid
-graph TD
-
-    F[File] -->|CONTAINS| C1[CodeChunk]
-    C1 -->|CONTAINS| C2[Function]
-    C2 -->|CALLS| C3[Function]
-    C3 -->|DEFINED_IN| F2[File]
-
-    C2 -->|IMPORTS| M[Module]
-    C2 -->|REFERENCES| S[Symbol]
+flowchart LR
+    A[File] -->|CONTAINS| B[CodeChunk]
+    A -->|CONTAINS| C[CodeChunk]
+    B -->|CALLS| C
 ```
 
 This allows repository relationships to complement semantic retrieval.
@@ -617,8 +612,6 @@ The Pull Request is opened against the configured base branch.
 
 ```text
 Zenith/
-│
-├── .github/
 │
 ├── test/
 │   ├── test_phase1.py
